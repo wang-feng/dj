@@ -1,0 +1,187 @@
+#!/bin/bash
+if [[ $# -lt 1 ]]; then
+	echo ""
+	echo "Usage: $0 <caseTag>"
+	echo ""
+	echo "Examples:"
+	echo "          $0 cc"
+	echo "          $0 snc"
+	echo "          $0 fm"	
+	echo "          $0 test"
+	exit
+fi
+
+function showCmdTitle {	
+		echo "$cmdTitle"
+}
+cmdsWithSingleTitle="PbDumpTbls coh_cc"
+cmdsWithDoubleTitle="FEShowTopologStatus CxhPcShowXcCfg"
+function getCmdTitle {  #cmd line
+	#echo "dbg: input para=[$@]"
+	case $@ in 
+		*PbDumpTbls*)
+			cmdTitle=""
+		;;
+		
+		*coh_cc*)			
+			cmdTitle="`cat temp_cmd_rslt.log |grep '^\s*dwIndex'`"
+		;;
+		*CxhPcShowXcCfg*)
+			cmdTitle="Slot TpEn MapType TpType TpIndex CCMcid HoChnl LoChnl GrpType GrpNo PcoMcId 1:NMcid"
+		;;
+		*)
+			cmdTitle="noCmdTitle"
+		;;
+	esac
+}
+
+function setCmdTitle {  #cmdTtile
+	cmdTitle="$@"
+}
+
+function getCmdContent { # cmd line
+	#echo "dbg: input para=[$@]"
+	case "$@" in 
+		*PbDumpTbls*)
+			cmdContent="`cat temp_cmd_rslt.log |grep ^'\s*0x'|awk '{print $1 , $2 }' |cut -b1-6,8-10,13-16`"
+		;;
+		
+		*coh_cc*)
+			cmdContent="`cat temp_cmd_rslt.log |grep '^\s*\[' |grep -v \#| tr -d [] |sed s/'0x\s*'/0x/g`"
+		;;
+		*CxhPcShowXcCfg*)
+			cmdContent="`cat temp_cmd_rslt.log|grep ^'\s*[0-9]+*' |grep '|$' |sed  -e 's/|/ /g' -e 's/->/ /g' -e 's/0x\s*/0x/g' `"
+		;;
+		
+		*)
+			cmdTitle="noCmdTitle"
+		;;
+	esac
+}
+
+function parseLine {
+	#echo $src_slot $src_port $dst_slot $dst_port
+	case $@ in 
+		cmd*)	
+			shift;			
+			eval echo "debug info:[$@]"			
+	 		eval "$@" > temp_cmd_rslt.log
+			cat temp_cmd_rslt.log >>$diagCaseFile.log
+			errCount=`cat temp_cmd_rslt.log |grep -i err |wc -l`
+			if [[ "$errCount" -ne 0 ]]; then
+				echo "exec cmd [$@] return error, please check the log file [temp_cmd_rslt.log] for detail."
+				echo "ro check the whole log file [$diagCaseFile.log]."
+				exit
+			fi
+			getCmdTitle "$@"
+			getCmdContent "$@"
+			
+		;;
+		gettitle*)
+			getCmdTitle 
+		;;
+		showtitle*)
+			echo "cmdTille = $cmdTitle"
+		;;
+		showcontent*)
+			echo "cmdContent = "
+			echo "$cmdContent"
+		;;
+		settitle*)
+			shift;
+			setCmdTitle "$@"
+		;;
+		*)
+			echo "can not find match pattern [$@]"	
+		;;
+	esac
+
+}
+	
+function ccInit {
+	#echo "debug info: invoke ccInit"
+	paraError=0	
+	if [[ $# -ge 7 && "$1" =~ "^[bBuU]$" ]]; then		
+		direction=$1	
+		shift;
+		for i in $*; do
+			if ! [[ "$i" =~ "^[0-9]+$" ]]; then
+				paraError=1				
+				break;
+			fi
+		done
+	else
+		paraError=1
+	fi
+	
+	if [[ $paraError == 1 ]]; then	
+		echo "diag cc needs 7 parameters as following:"
+		echo "	direction src_slot src_port src_tp     dst_slot dst_port  dst_tp"
+		echo ""
+		echo "Example:"
+		echo "	u 1 4 7   2 5 8"
+		echo "	b 1 5 8   3 6 9"
+		exit
+	fi
+	
+	src_slot=$1
+	src_port=$2
+	src_tpId=$3
+	dst_slot=$4
+	dst_port=$5
+	dst_tpId=$6	
+}
+
+function parseDiagCaseFile {  # input para: file  tag  externPara
+	#echo "[$1 $2 $3 $4 $5 $6]"	
+	case $1 in
+		snc*)
+		;;
+		cc*) 
+			shift;
+			ccInit $@
+		;;
+		test*)
+			echo "[$1 $2 $3 $4 $5 $6]"
+		;;
+		fm*)
+		;;
+		*)
+			echo "can not find match pattern for input file [$1]"
+		;;
+
+	esac
+
+	while read line
+	do
+	if ! [[ $line =~ ^'\s*$' || $line =~ ^'\s*#' ]]; then		
+		formatLine=`echo "$line" |sed 's/\r//g'`
+		parseLine $formatLine 
+	fi
+	done < $diagCaseFile
+
+	return 1
+}
+
+function parseDiagCase {	# file  externPara
+	echo "my paar:" $@
+	diagCaseFile=$1
+
+	>$diagCaseFile.log
+	parseDiagCaseFile $@ 
+	
+	if [[ $? == 0 ]] ; then
+		echo "[ ok ] ......... check $diagCaseFile"
+	else
+		echo "[fail] ......... check $diagCaseFile"
+	fi
+}
+
+# handle all the related cases file
+caseTag=$1
+for file in `ls ${caseTag}*.dc` 
+do 
+	#echo $file
+	shift;  # remove the caseTag	
+	parseDiagCase $file $@ 
+done
